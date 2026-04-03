@@ -10,11 +10,12 @@ use std::io::{BufWriter, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
+use clap::Parser;
+use std::path::PathBuf;
 
 use memmap2;
 use std::thread;
 
-const LINK_MANIFESTS:bool=true;
 
 #[derive(Deserialize)]
 struct CatalogEntry {
@@ -25,6 +26,25 @@ struct CatalogEntry {
 #[allow(dead_code, unused_imports)]
 mod schema_generated;
 use schema_generated::rman::Manifest;
+
+
+
+#[derive(Parser, Debug)]
+#[command(name = "Manifest Analyzer")]
+#[command(about = "Analyzes Riot RMAN manifests for chunk/file relationships", long_about = None)]
+struct Args {
+    
+    #[arg(default_value = "./manifests")]
+    manifest_dir: PathBuf,
+
+   
+    #[arg(default_value = ".")]
+    out_dir: PathBuf,
+
+   
+    #[arg(long, default_value_t = false)]
+    no_manifest_tracking: bool,
+}
 
 pub struct ManifestDeliverer {
     rx: std::sync::mpsc::Receiver<(u64, bytes::Bytes)>,
@@ -237,7 +257,14 @@ pub fn write_results(
 }
 
 pub fn main() {
-    let deliverer = ManifestDeliverer::from_directory("./manifests");
+    let args = Args::parse();
+    if !args.out_dir.exists() {
+        fs::create_dir_all(&args.out_dir).expect("Failed to create output directory");
+    }
+    let acid_path = args.out_dir.join("chunks.acid");
+    let access_path = args.out_dir.join("manifests.access");
+
+    let deliverer = ManifestDeliverer::from_directory(args.manifest_dir.to_str().unwrap());
     let mut aggregated_map = deliverer
         .par_bridge()
         .fold(
@@ -314,12 +341,12 @@ pub fn main() {
             },
         );
 
-    let a = write_results(&mut aggregated_map, "chunks.acid", "manifests.accessed").is_err();
+    let a = write_results(&mut aggregated_map,acid_path.to_str().unwrap(), access_path.to_str().unwrap()).is_err();
     if a {
         println!("chunks.acid disk write failed");
     }
 
-    if LINK_MANIFESTS{
+    if !args.no_manifest_tracking{
     let mut sorted_refs: Vec<(i64, u64,u64)> = aggregated_map
         .iter()
         .map(|(&id, entry)| (id, entry.manifests,entry.count))
@@ -341,7 +368,7 @@ pub fn main() {
         .read(true)
         .write(true)
         .create(true)
-        .open("manifests.access")
+        .open(access_path.to_str().unwrap())
         .expect("should eb able to create file");
 
     file.set_len(total_elements * 8).expect("should be able to set filesize");
@@ -349,7 +376,7 @@ pub fn main() {
     let mmap = unsafe { memmap2::MmapMut::map_mut(&file).expect("should eb able to memmap file") };
     let mmap_ptr = mmap.as_ptr() as usize;
 
-    let deliverer_p2 = ManifestDeliverer::from_directory("./manifests");
+    let deliverer_p2 = ManifestDeliverer::from_directory(args.manifest_dir.to_str().unwrap());
     deliverer_p2
         .par_bridge()
         .for_each(|(manifest_id, raw_data)| {
