@@ -32,6 +32,44 @@ pub struct ManifestDeliverer {
     closed: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 impl ManifestDeliverer {
+    pub fn from_directory(dir_path: &str) -> Self {
+        let (tx, rx) = mpsc::sync_channel(20); // Buffer 20 manifests in RAM
+        let count = Arc::new(AtomicUsize::new(0));
+        let closed = Arc::new(AtomicBool::new(false));
+    
+        let thread_count = Arc::clone(&count);
+        let thread_closed = Arc::clone(&closed);
+        let path = dir_path.to_string();
+    
+        thread::spawn(move || {
+            if let Ok(entries) = fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    
+                   
+                    if path.extension().map_or(false, |ext| ext == "manifest") {
+                        
+                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                            if let Ok(manifest_id) = u64::from_str_radix(stem, 16) {
+                                if let Ok(data) = fs::read(&path) {
+                                    
+                                    tx.send((manifest_id, Bytes::from(data))).unwrap();
+                                    thread_count.fetch_add(1, Ordering::SeqCst);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            thread_closed.store(true, Ordering::SeqCst);
+            println!("Directory deliverer finished scanning.");
+        });
+    
+        Self { rx, count, closed }
+    }
+
+
     pub fn new_catalog_test() -> Self {
         let (tx, rx) = mpsc::sync_channel(5); // Buffer 5 manifests to prevent RAM bloat
         let count = Arc::new(AtomicUsize::new(0));
@@ -199,7 +237,7 @@ pub fn write_results(
 }
 
 pub fn main() {
-    let deliverer = ManifestDeliverer::new_catalog_test();
+    let deliverer = ManifestDeliverer::from_directory("./manifests");
     let mut aggregated_map = deliverer
         .par_bridge()
         .fold(
@@ -311,8 +349,7 @@ pub fn main() {
     let mmap = unsafe { memmap2::MmapMut::map_mut(&file).expect("should eb able to memmap file") };
     let mmap_ptr = mmap.as_ptr() as usize;
 
-    let deliverer_p2 = ManifestDeliverer::new_catalog_test(); // Re-instantiate
-
+    let deliverer_p2 = ManifestDeliverer::from_directory("./manifests");
     deliverer_p2
         .par_bridge()
         .for_each(|(manifest_id, raw_data)| {
