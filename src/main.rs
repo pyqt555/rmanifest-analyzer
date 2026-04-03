@@ -1,7 +1,5 @@
 use flatbuffers::*;
-use std::collections::HashSet;
 use std::fs;
-use std::os::raw;
 
 use bytes::Bytes;
 use hashbrown::HashMap;
@@ -10,10 +8,8 @@ use serde::Deserialize;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::sync::Arc;
-use std::sync::atomic::AtomicU32;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
-use std::time::Instant;
 
 use memmap2;
 use std::thread;
@@ -147,7 +143,7 @@ thread_local! {
         std::cell::RefCell::new(zstd::bulk::Decompressor::new().unwrap());
 }
 
-pub fn decompress_manifest(compressed_data: &[u8], uncompressed_size: usize) -> Vec<u8> {
+pub fn decompress_manifest(compressed_data: &[u8], _uncompressed_size: usize) -> Vec<u8> {
     /*DECOMPRESSOR.with(|der| {
         let mut der = der.borrow_mut();
 
@@ -171,7 +167,7 @@ pub struct ChunkEntry {
 pub fn write_results(
     map: &mut HashMap<i64, ChunkEntry>,
     acid_path: &str,
-    access_path: &str,
+    _access_path: &str,
 ) -> std::io::Result<()> {
     let mut sorted: Vec<(i64, ChunkEntry)> = map.iter().map(|(&k, v)| (k, v.clone())).collect();
     sorted.sort_unstable_by(|a, b| b.1.count.cmp(&a.1.count));
